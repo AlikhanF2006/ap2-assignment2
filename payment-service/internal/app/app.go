@@ -12,16 +12,16 @@ import (
 	"payment-service/internal/usecase"
 )
 
-func NewApp() (*gin.Engine, error) {
+func NewApp() (*gin.Engine, *usecase.PaymentUsecase, error) {
 	dbURL := os.Getenv("DB_URL")
 
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if err := db.Ping(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	repo := repository.NewPostgresRepository(db)
@@ -31,5 +31,5 @@ func NewApp() (*gin.Engine, error) {
 	router := gin.Default()
 	httpTransport.RegisterRoutes(router, handler)
 
-	return router, nil
+	return router, paymentUsecase, nil
 }

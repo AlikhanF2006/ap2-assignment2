@@ -67,7 +67,7 @@ func (r *PostgresRepository) GetByID(id string) (*domain.Order, error) {
 func (r *PostgresRepository) UpdateStatus(id string, status string) error {
 	query := `
 		UPDATE orders
-		SET status = $1
+		SET status = $1, updated_at = NOW()
 		WHERE id = $2
 	`
 
