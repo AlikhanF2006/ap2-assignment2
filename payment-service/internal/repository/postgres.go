@@ -62,3 +62,50 @@ func (r *PostgresRepository) GetByOrderID(orderID string) (*domain.Payment, erro
 
 	return &payment, nil
 }
+func (r *PostgresRepository) ListByStatus(status string) ([]*domain.Payment, error) {
+	var (
+		rows *sql.Rows
+		err  error
+	)
+
+	if status == "" {
+		rows, err = r.db.Query(`
+			SELECT id, order_id, transaction_id, amount, status
+			FROM payments
+		`)
+	} else {
+		rows, err = r.db.Query(`
+			SELECT id, order_id, transaction_id, amount, status
+			FROM payments
+			WHERE status = $1
+		`, status)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var payments []*domain.Payment
+
+	for rows.Next() {
+		var p domain.Payment
+		if err := rows.Scan(
+			&p.ID,
+			&p.OrderID,
+			&p.TransactionID,
+			&p.Amount,
+			&p.Status,
+		); err != nil {
+			return nil, err
+		}
+
+		payments = append(payments, &p)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return payments, nil
+}

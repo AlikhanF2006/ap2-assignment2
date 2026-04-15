@@ -16,6 +16,7 @@ var (
 type PaymentRepository interface {
 	Create(payment *domain.Payment) error
 	GetByOrderID(orderID string) (*domain.Payment, error)
+	ListByStatus(status string) ([]*domain.Payment, error)
 }
 
 type PaymentUsecase struct {
@@ -62,4 +63,8 @@ func (u *PaymentUsecase) GetPaymentByOrderID(orderID string) (*domain.Payment, e
 		return nil, ErrPaymentNotFound
 	}
 	return payment, nil
+}
+
+func (u *PaymentUsecase) ListPayments(status string) ([]*domain.Payment, error) {
+	return u.repo.ListByStatus(status)
 }

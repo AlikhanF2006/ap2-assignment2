@@ -13,6 +13,7 @@ import (
 type PaymentUsecase interface {
 	CreatePayment(orderID string, amount int64) (*domain.Payment, error)
 	GetPaymentByOrderID(orderID string) (*domain.Payment, error)
+	ListPayments(status string) ([]*domain.Payment, error)
 }
 
 type Handler struct {
@@ -77,4 +78,18 @@ func (h *Handler) GetPaymentByOrderID(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, payment)
+}
+
+func (h *Handler) ListPayments(c *gin.Context) {
+	status := c.Query("status")
+
+	payments, err := h.usecase.ListPayments(status)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to list payments",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, payments)
 }
