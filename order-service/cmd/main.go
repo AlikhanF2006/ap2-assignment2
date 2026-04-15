@@ -7,6 +7,7 @@ import (
 
 	"github.com/joho/godotenv"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
 
 	"order-service/internal/app"
 
@@ -44,6 +45,7 @@ func main() {
 
 		grpcServer := grpc.NewServer()
 		orderpb.RegisterOrderServiceServer(grpcServer, grpcHandler)
+		reflection.Register(grpcServer)
 
 		log.Println("gRPC server running on port:", grpcPort)
 

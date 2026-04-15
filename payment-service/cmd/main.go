@@ -7,10 +7,12 @@ import (
 
 	"github.com/joho/godotenv"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
 
-	paymentpb "github.com/AlikhanF2006/ap2-protos-gen/payment"
 	"payment-service/internal/app"
 	grpcTransport "payment-service/internal/transport/grpc"
+
+	paymentpb "github.com/AlikhanF2006/ap2-protos-gen/payment"
 )
 
 func main() {
@@ -44,6 +46,7 @@ func main() {
 		grpcHandler := grpcTransport.NewPaymentHandler(paymentUsecase)
 
 		paymentpb.RegisterPaymentServiceServer(grpcServer, grpcHandler)
+		reflection.Register(grpcServer)
 
 		log.Println("gRPC payment-service running on port:", grpcPort)
 
