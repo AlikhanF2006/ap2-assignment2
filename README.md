@@ -1,147 +1,276 @@
-# Assignment 2 — gRPC Migration & Contract-First Development
+# Assignment 3 — Event-Driven Architecture with Message Queues
 
 ## Student Information
-- **Name:** Alikhan Faizrakhman
-- **Group:** SE - 2408
-- **Course:** Advanced Programming 2
-- **Assignment:** Assignment 2 — gRPC Migration & Contract-First Development
+
+* **Name:** Alikhan Faizrakhman
+* **Group:** SE-2408
+* **Course:** Advanced Programming 2
+* **Assignment:** Assignment 3 — Event-Driven Architecture with Message Queues
 
 ---
 
 ## Project Overview
-This project is an updated version of Assignment 1.  
-The system consists of two microservices:
 
-- **Order Service**
-- **Payment Service**
+This project extends Assignment 2 by adding an event-driven communication flow using RabbitMQ.
 
-In this assignment, the communication between services was migrated from REST to **gRPC**.  
-The external API for the user is still exposed through **REST** by the Order Service, while the internal communication between Order Service and Payment Service is now implemented using **gRPC**.
+In Assignment 2, the Order Service and Payment Service communicated synchronously using gRPC. In Assignment 3, a new Notification Service was added to make notifications asynchronous and decoupled.
 
-Additionally, the project demonstrates **server-side streaming** with the method:
+Main event-driven flow:
 
-`SubscribeToOrderUpdates(OrderRequest) returns (stream OrderStatusUpdate)`
+Payment Service → RabbitMQ Message Broker → Notification Service
 
-This allows a client to subscribe to order status updates in real time. The assignment requires migrating inter-service communication to gRPC, keeping REST for the external API, and implementing server-side streaming for order tracking.
+After a payment is successfully created and saved to the database, the Payment Service publishes a payment event to RabbitMQ. The Notification Service listens to the `payment.completed` queue and simulates sending an email by printing a notification log to the console.
 
 ---
 
-## Repository Links
+## Services
 
-### 1. Proto Repository
+The system consists of three microservices:
 
-`https://github.com/AlikhanF2006/ap2-protos.git`
+* **Order Service**
+* **Payment Service**
+* **Notification Service**
 
-### 2. Generated Code Repository
+Infrastructure components:
 
-`https://github.com/AlikhanF2006/ap2-protos-gen.git`
-
-### 3. Main Project Repository
-
-`https://github.com/AlikhanF2006/ap2-assignment2.git`
----
-
-## Architecture
-
-### Before Migration
-In Assignment 1, the Order Service communicated with the Payment Service using REST.
-
-### After Migration
-In Assignment 2:
-
-- **Order Service** still provides REST endpoints for the end user.
-- **Order Service** acts as a **gRPC client** when calling the Payment Service.
-- **Payment Service** acts as a **gRPC server** and implements `ProcessPayment`.
-- **Order Service** also acts as a **gRPC server** for streaming order status updates.
-- A client can subscribe to updates using `SubscribeToOrderUpdates`.
-
-This design follows the assignment requirement where the Payment Service must expose a gRPC server interface and the Order Service must provide server-side streaming for order tracking.
+* **PostgreSQL**
+* **RabbitMQ**
+* **Docker Compose**
 
 ---
 
 ## Architecture Diagram
-```text
-+-------------------+          gRPC           +-------------------+
-|   Order Service   | ----------------------> |  Payment Service  |
-|   (REST + gRPC)   |                         |    (gRPC Server)  |
-+-------------------+                         +-------------------+
-         |
-         | REST
-         v
-+-------------------+
-|   REST Client     |
-| (Postman / User)  |
-+-------------------+
 
-         ^
-         | gRPC Server-Side Streaming
-         |
-+-----------------------------+
-| gRPC Client / Postman       |
-| SubscribeToOrderUpdates()   |
-+-----------------------------+
+```text
++-------------------+
+|   Order Service   |
+|   REST + gRPC     |
++-------------------+
+          |
+          | gRPC
+          v
++-------------------+        publishes event        +-------------------+
+|  Payment Service  | ----------------------------> |     RabbitMQ      |
+| REST + gRPC       |        payment.completed      | Message Broker    |
++-------------------+                               +-------------------+
+                                                            |
+                                                            | consumes event
+                                                            v
+                                                   +----------------------+
+                                                   | Notification Service |
+                                                   | Consumer             |
+                                                   +----------------------+
 ```
+
+---
+
 ## Architecture Description
 
-The system consists of two microservices:
+The Payment Service acts as a producer. After a payment is successfully saved in the database, it creates a payment event and publishes it to RabbitMQ.
 
-- Order Service (REST + gRPC)
-- Payment Service (gRPC Server)
+The Notification Service acts as a consumer. It listens to the `payment.completed` queue. When it receives a message, it logs a simulated email notification:
 
-The Order Service exposes REST endpoints for external clients (e.g., POST /orders).  
-Internally, it communicates with the Payment Service using gRPC for processing payments.
+```text
+[Notification] Sent email to user@example.com for Order #123. Amount: 5000. Status: Authorized
+```
 
-Additionally, the Order Service implements server-side streaming via the method  
-`SubscribeToOrderUpdates`, which allows clients to receive real-time order status updates.
+The Notification Service is fully decoupled from the Order Service and Payment Service. It does not communicate with them directly using REST or gRPC. It only receives events through RabbitMQ.
 
-This architecture demonstrates the migration from REST to gRPC for internal communication while preserving REST for external access.
+---
 
-## Evidence
+## Event Payload
 
-### 1. REST API — Create Order
-![img_2.png](images/img_2.png)
+The event is sent as JSON and contains:
 
-### 2. gRPC Streaming — SubscribeToOrderUpdates
-![img.png](images/img.png)
+```json
+{
+  "event_id": "unique-event-id",
+  "order_id": "123",
+  "amount": 5000,
+  "customer_email": "user@example.com",
+  "status": "Authorized"
+}
+```
 
-### 3. Services Running (Logs)
-![img_1.png](images/img_1.png)
+---
 
-## How to Run
+## Reliability and ACK Logic
 
-### 1. Run Payment Service
+The Notification Service uses manual acknowledgments.
+
+Auto-ACK is disabled. A message is acknowledged only after the notification log is successfully printed.
+
+If message parsing fails, the message is rejected using `Nack()`. If notification processing succeeds, the message is confirmed using `Ack()`.
+
+This guarantees better reliability and prevents message loss if the consumer crashes during processing.
+
+The queue is also configured as durable so that messages survive broker restart.
+
+---
+
+## Idempotency Strategy
+
+The Notification Service uses an in-memory map to store processed `event_id` values.
+
+Before printing a notification, the service checks whether the event has already been processed.
+
+If the same event is delivered twice, the service skips it and does not print the notification again.
+
+This prevents duplicate notification processing and satisfies idempotency requirements.
+
+---
+
+## Docker Compose
+
+The whole system runs using Docker Compose.
+
+Included components:
+
+* order-service
+* payment-service
+* notification-service
+* postgres
+* rabbitmq
+
+Run the project:
+
 ```bash
-cd payment-service
-go run cmd/main.go
+docker compose up --build
+```
 
-cd order-service
-go run cmd/main.go
+If the images are already built:
 
-2. Run Order Service
-cd order-service
-go run cmd/main.go
-3. Test REST API
+```bash
+docker compose up
+```
 
-POST http://localhost:8081/orders
+Stop the project:
+
+```bash
+docker compose down
+```
+
+---
+
+## How to Test
+
+### 1. Start all services
+
+```bash
+docker compose up
+```
+
+### 2. Send payment request using Postman
+
+Method:
+
+```text
+POST
+```
+
+URL:
+
+```text
+http://localhost:8082/payments
+```
 
 Body:
 
+```json
 {
-  "customer_id": "123",
-  "item_name": "iphone",
-  "amount": 1000
+  "order_id": "123",
+  "amount": 5000
 }
-4. Test gRPC Streaming
+```
 
-Connect to:
-localhost:50052
+Expected response:
 
-Method:
-SubscribeToOrderUpdates
-
-Message:
-
+```json
 {
-  "order_id": "YOUR_ORDER_ID"
+  "id": "...",
+  "order_id": "123",
+  "transaction_id": "...",
+  "amount": 5000,
+  "status": "Authorized"
 }
+```
 
+### 3. Check Notification Service logs
+
+Expected output:
+
+```text
+[Notification] Sent email to user@example.com for Order #123. Amount: 5000. Status: Authorized
+```
+
+---
+
+## RabbitMQ Management UI
+
+RabbitMQ dashboard:
+
+```text
+http://localhost:15672
+```
+
+Login:
+
+```text
+guest
+```
+
+Password:
+
+```text
+guest
+```
+
+---
+
+## Evidence / Screenshots
+
+### 1. Docker Compose Running
+
+![Docker Compose Running](images/docker-compose-running.png)
+
+### 2. Successful Payment Request in Postman
+
+![Postman Payment Request](images/postman-p-request.png)
+
+### 3. Notification Service Log
+
+![Notification Service Log](images/notification-log.png)
+
+### 4. RabbitMQ Management UI
+
+![RabbitMQ UI](images/rabbitmq-ui.png)
+
+
+---
+
+## Deliverables Included
+
+* Source code for all three services
+* Docker Compose file
+* Architecture Diagram
+* README with ACK logic and Idempotency explanation
+
+This matches the Assignment 3 requirements.
+
+---
+
+## Conclusion
+
+This assignment demonstrates an event-driven architecture using RabbitMQ.
+
+The Payment Service publishes payment events after successful database transactions. The Notification Service consumes these events asynchronously and processes notifications independently.
+
+The project uses:
+
+* RabbitMQ for asynchronous messaging
+* Manual ACKs for reliability
+* Durable queues for persistence
+* Idempotency checks for duplicate prevention
+* Docker Compose for full environment orchestration
+
+This implementation follows the required EDA design and demonstrates reliable producer-consumer communication between microservices.

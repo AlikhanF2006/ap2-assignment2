@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 
 	"payment-service/internal/domain"
+	"payment-service/internal/publisher"
 )
 
 var (
@@ -20,12 +21,14 @@ type PaymentRepository interface {
 }
 
 type PaymentUsecase struct {
-	repo PaymentRepository
+	repo      PaymentRepository
+	publisher *publisher.RabbitMQPublisher
 }
 
-func NewPaymentUsecase(repo PaymentRepository) *PaymentUsecase {
+func NewPaymentUsecase(repo PaymentRepository, publisher *publisher.RabbitMQPublisher) *PaymentUsecase {
 	return &PaymentUsecase{
-		repo: repo,
+		repo:      repo,
+		publisher: publisher,
 	}
 }
 
@@ -51,6 +54,20 @@ func (u *PaymentUsecase) CreatePayment(orderID string, amount int64) (*domain.Pa
 		return nil, err
 	}
 
+	if u.publisher != nil {
+		event := publisher.PaymentEvent{
+			EventID:       uuid.NewString(),
+			OrderID:       payment.OrderID,
+			Amount:        payment.Amount,
+			CustomerEmail: "user@example.com",
+			Status:        payment.Status,
+		}
+
+		if err := u.publisher.Publish(event); err != nil {
+			return nil, err
+		}
+	}
+
 	return payment, nil
 }
 
@@ -62,6 +79,7 @@ func (u *PaymentUsecase) GetPaymentByOrderID(orderID string) (*domain.Payment, e
 	if payment == nil {
 		return nil, ErrPaymentNotFound
 	}
+
 	return payment, nil
 }
 

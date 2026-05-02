@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
 
+	"payment-service/internal/publisher"
 	"payment-service/internal/repository"
 	httpTransport "payment-service/internal/transport/http"
 	"payment-service/internal/usecase"
@@ -14,6 +15,11 @@ import (
 
 func NewApp() (*gin.Engine, *usecase.PaymentUsecase, error) {
 	dbURL := os.Getenv("DB_URL")
+
+	rabbitURL := os.Getenv("RABBITMQ_URL")
+	if rabbitURL == "" {
+		rabbitURL = "amqp://guest:guest@localhost:5672/"
+	}
 
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
@@ -25,7 +31,13 @@ func NewApp() (*gin.Engine, *usecase.PaymentUsecase, error) {
 	}
 
 	repo := repository.NewPostgresRepository(db)
-	paymentUsecase := usecase.NewPaymentUsecase(repo)
+
+	rabbitPublisher, err := publisher.NewRabbitMQPublisher(rabbitURL)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	paymentUsecase := usecase.NewPaymentUsecase(repo, rabbitPublisher)
 	handler := httpTransport.NewHandler(paymentUsecase)
 
 	router := gin.Default()

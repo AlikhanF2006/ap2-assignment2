@@ -33,6 +33,7 @@ func (h *PaymentHandler) ProcessPayment(ctx context.Context, req *paymentpb.Paym
 	}, nil
 }
 
+/*
 func (h *PaymentHandler) ListPayments(ctx context.Context, req *paymentpb.ListPaymentsRequest) (*paymentpb.ListPaymentsResponse, error) {
 	payments, err := h.uc.ListPayments(req.Status)
 	if err != nil {
@@ -55,3 +56,4 @@ func (h *PaymentHandler) ListPayments(ctx context.Context, req *paymentpb.ListPa
 
 	return resp, nil
 }
+*/
