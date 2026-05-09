@@ -1,150 +1,337 @@
-# Assignment 3 — Event-Driven Architecture with Message Queues
+# Assignment 4 — Performance Optimization & External Integrations
 
 ## Student Information
 
 * **Name:** Alikhan Faizrakhman
 * **Group:** SE-2408
 * **Course:** Advanced Programming 2
-* **Assignment:** Assignment 3 — Event-Driven Architecture with Message Queues
+* **Assignment:** Assignment 4 — Performance Optimization & External Integrations
+## GitHub Repository
+
+Repository link: https://github.com/AlikhanF2006/ap2-assignment2.git
+
+---
+
+## Previous Work: Assignment 3
+
+This project is built on top of Assignment 3.
+
+In Assignment 3, the system used RabbitMQ for event-driven communication between Payment Service and Notification Service. The Payment Service published payment events to the `payment.completed` queue, and the Notification Service consumed those events asynchronously.
+
+Assignment 4 improves this system by adding Redis caching, cache invalidation, reliable background jobs, provider abstraction, retry logic, exponential backoff, and Redis-based idempotency.
 
 ---
 
 ## Project Overview
 
-This project extends Assignment 2 by adding an event-driven communication flow using RabbitMQ.
+Assignment 4 extends the existing microservice system from Assignment 3 by adding performance optimization and reliable background job processing.
 
-In Assignment 2, the Order Service and Payment Service communicated synchronously using gRPC. In Assignment 3, a new Notification Service was added to make notifications asynchronous and decoupled.
+The system now includes Redis caching in the Order Service and a reliable Notification Service worker with external provider abstraction, retries, exponential backoff, and Redis-based idempotency.
 
-Main event-driven flow:
+Main Assignment 4 improvements:
 
-Payment Service → RabbitMQ Message Broker → Notification Service
-
-After a payment is successfully created and saved to the database, the Payment Service publishes a payment event to RabbitMQ. The Notification Service listens to the `payment.completed` queue and simulates sending an email by printing a notification log to the console.
+* Redis cache-aside pattern in Order Service
+* Cache TTL for order details
+* Cache invalidation after order status updates
+* Redis added to Docker Compose infrastructure
+* Notification Service transformed into a reliable background worker
+* External notification provider abstraction using Adapter Pattern
+* Simulated provider with latency and random failures
+* Retry policy with exponential backoff
+* Redis-based idempotency for notification jobs
 
 ---
 
-## Services
+## Updated Services and Infrastructure
 
-The system consists of three microservices:
+The system consists of:
 
 * **Order Service**
 * **Payment Service**
 * **Notification Service**
-
-Infrastructure components:
-
 * **PostgreSQL**
 * **RabbitMQ**
+* **Redis**
 * **Docker Compose**
 
+Redis is used for two purposes:
+
+1. Caching order details in the Order Service
+2. Storing notification idempotency records in the Notification Service
+
 ---
 
-## Architecture Diagram
+## Assignment 4 Architecture Diagram
 
-```text
-+-------------------+
-|   Order Service   |
-|   REST + gRPC     |
-+-------------------+
-          |
-          | gRPC
-          v
-+-------------------+        publishes event        +-------------------+
-|  Payment Service  | ----------------------------> |     RabbitMQ      |
-| REST + gRPC       |        payment.completed      | Message Broker    |
-+-------------------+                               +-------------------+
-                                                            |
-                                                            | consumes event
-                                                            v
-                                                   +----------------------+
-                                                   | Notification Service |
-                                                   | Consumer             |
-                                                   +----------------------+
+```mermaid
+flowchart LR
+    Client[Client / Postman] -->|HTTP REST| Order[Order Service]
+
+    Order -->|Read and Write Orders| Postgres[(PostgreSQL)]
+    Order -->|Cache Aside: GET / SET / DELETE order:id| Redis[(Redis)]
+
+    Order -->|gRPC CreatePayment| Payment[Payment Service]
+    Payment -->|Save Payment| Postgres
+    Payment -->|Publish payment.completed event| RabbitMQ[(RabbitMQ Queue)]
+
+    RabbitMQ -->|Consume Event| Notification[Notification Service Worker]
+
+    Notification -->|Check notification:payment:id| Redis
+    Notification -->|Send with Retry and Backoff| Provider[Simulated Email Provider]
+
+    Provider -->|Success or Failure| Notification
+    Notification -->|Mark Processed| Redis
 ```
 
 ---
 
-## Architecture Description
+## Redis Cache-Aside Strategy
 
-The Payment Service acts as a producer. After a payment is successfully saved in the database, it creates a payment event and publishes it to RabbitMQ.
+The Order Service implements the cache-aside pattern for order detail requests.
 
-The Notification Service acts as a consumer. It listens to the `payment.completed` queue. When it receives a message, it logs a simulated email notification:
+When a client sends:
 
-```text
-[Notification] Sent email to user@example.com for Order #123. Amount: 5000. Status: Authorized
+```http
+GET /orders/:id
 ```
 
-The Notification Service is fully decoupled from the Order Service and Payment Service. It does not communicate with them directly using REST or gRPC. It only receives events through RabbitMQ.
+the service first checks Redis using the key:
+
+```text
+order:{order_id}
+```
+
+If the order exists in Redis, the service returns the cached value immediately. This is called a cache hit.
+
+If the order does not exist in Redis, the service loads the order from PostgreSQL, returns it to the client, and stores it in Redis. This is called a cache miss.
+
+The cache TTL is configured as:
+
+```env
+CACHE_TTL_SECONDS=300
+```
+
+This means cached order data expires after 5 minutes.
+
+Example logs:
+
+```text
+CACHE MISS order_id=e566cd81-1f9f-454e-b7d4-34b1e239f343
+CACHE SET order_id=e566cd81-1f9f-454e-b7d4-34b1e239f343 ttl=5m0s
+CACHE HIT order_id=e566cd81-1f9f-454e-b7d4-34b1e239f343
+```
 
 ---
 
-## Event Payload
+## Cache Invalidation Strategy
 
-The event is sent as JSON and contains:
+To prevent stale data, the Order Service invalidates the Redis cache whenever the order status changes.
 
-```json
-{
-  "event_id": "unique-event-id",
-  "order_id": "123",
-  "amount": 5000,
-  "customer_email": "user@example.com",
-  "status": "Authorized"
+For example, after payment processing, the order status is updated in PostgreSQL. Immediately after the database update, the Redis key is deleted:
+
+```text
+order:{order_id}
+```
+
+Example log:
+
+```text
+CACHE INVALIDATED order_id=e566cd81-1f9f-454e-b7d4-34b1e239f343
+```
+
+This guarantees that the next `GET /orders/:id` request will load fresh data from PostgreSQL and store the updated order in Redis again.
+
+---
+
+## Notification Background Worker
+
+The Notification Service now works as a background worker.
+
+The Payment Service publishes a `payment.completed` event to RabbitMQ after a payment is created. The Notification Service consumes this event asynchronously and processes the notification in the background.
+
+This design prevents slow external notification providers from blocking the main API request path.
+
+Example worker logs:
+
+```text
+[Worker] Notification service is waiting for payment events...
+[Worker] Job received event_id=25ae540a-8b1c-43a5-ad1c-10aff004ab20 payment_id=e033519a-d976-4e6b-b1a3-79f8d0949d37 order_id=e566cd81-1f9f-454e-b7d4-34b1e239f343
+```
+
+---
+
+## External Provider Adapter Pattern
+
+The Notification Service uses the Adapter Pattern to decouple notification logic from a specific external provider.
+
+The business logic depends on an interface:
+
+```go
+type EmailSender interface {
+    Send(ctx context.Context, to string, subject string, body string) error
 }
 ```
 
+The current implementation uses a simulated provider.
+
+The provider mode is configured using environment variables:
+
+```env
+PROVIDER_MODE=SIMULATED
+PROVIDER_LATENCY_MS=1000
+PROVIDER_FAILURE_RATE=30
+```
+
+The simulated provider imitates real external API behavior by adding artificial network latency and random failures.
+
+Example provider logs:
+
+```text
+[Provider] Simulating external email provider latency=1000ms
+[Provider] Email sent successfully to=user@example.com subject=Payment Authorized for Order e566cd81-1f9f-454e-b7d4-34b1e239f343
+```
+
 ---
 
-## Reliability and ACK Logic
+## Retry Policy and Exponential Backoff
 
-The Notification Service uses manual acknowledgments.
+If the simulated external provider fails, the worker retries the job.
 
-Auto-ACK is disabled. A message is acknowledged only after the notification log is successfully printed.
+Retry configuration:
 
-If message parsing fails, the message is rejected using `Nack()`. If notification processing succeeds, the message is confirmed using `Ack()`.
+```env
+MAX_RETRIES=3
+BACKOFF_BASE_SECONDS=2
+```
 
-This guarantees better reliability and prevents message loss if the consumer crashes during processing.
+The retry delay increases after each failed attempt:
 
-The queue is also configured as durable so that messages survive broker restart.
+```text
+Attempt 1 failed -> wait 2 seconds
+Attempt 2 failed -> wait 4 seconds
+Attempt 3 failed -> final attempt
+```
+
+Example logs:
+
+```text
+[Worker] Sending notification payment_id=e033519a-d976-4e6b-b1a3-79f8d0949d37 attempt=1/3
+[Worker] Provider failed payment_id=e033519a-d976-4e6b-b1a3-79f8d0949d37 error=simulated external provider failure retry_after=2s
+[Worker] Sending notification payment_id=e033519a-d976-4e6b-b1a3-79f8d0949d37 attempt=2/3
+[Provider] Email sent successfully to=user@example.com
+```
+
+This makes the worker resilient to temporary external provider failures.
 
 ---
 
-## Idempotency Strategy
+## Redis Idempotency Strategy
 
-The Notification Service uses an in-memory map to store processed `event_id` values.
+The Notification Service uses Redis to prevent duplicate notifications.
 
-Before printing a notification, the service checks whether the event has already been processed.
+Before sending a notification, the worker checks Redis using the key:
 
-If the same event is delivered twice, the service skips it and does not print the notification again.
+```text
+notification:payment:{payment_id}
+```
 
-This prevents duplicate notification processing and satisfies idempotency requirements.
+If the key already exists, the notification is skipped.
+
+After a successful notification, the worker stores:
+
+```text
+notification:payment:{payment_id} = processed
+```
+
+with a TTL of 24 hours.
+
+Example Redis check:
+
+```text
+GET notification:payment:e033519a-d976-4e6b-b1a3-79f8d0949d37
+"processed"
+
+TTL notification:payment:e033519a-d976-4e6b-b1a3-79f8d0949d37
+86142
+```
+
+This prevents duplicate emails when the same payment event is retried or delivered again.
+
+---
+
+## Environment Configuration
+
+### Order Service
+
+```env
+PORT=8081
+GRPC_PORT=50052
+
+DB_URL=postgres://postgres:postgres@postgres:5432/ap2db?sslmode=disable
+PAYMENT_GRPC_ADDR=payment-service:50051
+
+REDIS_ADDR=redis:6379
+REDIS_PASSWORD=
+REDIS_DB=0
+CACHE_TTL_SECONDS=300
+```
+
+### Payment Service
+
+```env
+PORT=8082
+GRPC_PORT=50051
+
+DB_URL=postgres://postgres:postgres@postgres:5432/ap2db?sslmode=disable
+RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+```
+
+### Notification Service
+
+```env
+RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+
+REDIS_ADDR=redis:6379
+REDIS_PASSWORD=
+REDIS_DB=0
+
+PROVIDER_MODE=SIMULATED
+MAX_RETRIES=3
+BACKOFF_BASE_SECONDS=2
+PROVIDER_LATENCY_MS=1000
+PROVIDER_FAILURE_RATE=30
+```
 
 ---
 
 ## Docker Compose
 
-The whole system runs using Docker Compose.
+The system is started using Docker Compose.
 
-Included components:
-
-* order-service
-* payment-service
-* notification-service
-* postgres
-* rabbitmq
-
-Run the project:
+Run all services:
 
 ```bash
-docker compose up --build
+docker compose up -d --build
 ```
 
-If the images are already built:
+Check running containers:
 
 ```bash
-docker compose up
+docker compose ps
 ```
 
-Stop the project:
+Expected containers:
+
+```text
+postgres
+rabbitmq
+redis
+order-service
+payment-service
+notification-service
+```
+
+Stop all services:
 
 ```bash
 docker compose down
@@ -152,15 +339,41 @@ docker compose down
 
 ---
 
-## How to Test
+## Database Tables
+
+If PostgreSQL starts with an empty database, create the required tables:
+
+```sql
+CREATE TABLE IF NOT EXISTS orders (
+    id TEXT PRIMARY KEY,
+    customer_id TEXT NOT NULL,
+    item_name TEXT NOT NULL,
+    amount BIGINT NOT NULL CHECK (amount > 0),
+    status TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS payments (
+    id TEXT PRIMARY KEY,
+    order_id TEXT NOT NULL,
+    transaction_id TEXT NOT NULL UNIQUE,
+    amount BIGINT NOT NULL CHECK (amount > 0),
+    status TEXT NOT NULL
+);
+```
+
+---
+
+## How to Test Assignment 4
 
 ### 1. Start all services
 
 ```bash
-docker compose up
+docker compose up -d --build
 ```
 
-### 2. Send payment request using Postman
+### 2. Create an order
 
 Method:
 
@@ -171,15 +384,16 @@ POST
 URL:
 
 ```text
-http://localhost:8082/payments
+http://localhost:8081/orders
 ```
 
 Body:
 
 ```json
 {
-  "order_id": "123",
-  "amount": 5000
+  "customer_id": "customer-1",
+  "item_name": "Laptop",
+  "amount": 1000
 }
 ```
 
@@ -188,89 +402,164 @@ Expected response:
 ```json
 {
   "id": "...",
-  "order_id": "123",
-  "transaction_id": "...",
-  "amount": 5000,
-  "status": "Authorized"
+  "customer_id": "customer-1",
+  "item_name": "Laptop",
+  "amount": 1000,
+  "status": "Paid",
+  "created_at": "..."
 }
 ```
 
-### 3. Check Notification Service logs
+### 3. Test Redis cache
 
-Expected output:
+Send the same request twice:
 
 ```text
-[Notification] Sent email to user@example.com for Order #123. Amount: 5000. Status: Authorized
+GET http://localhost:8081/orders/{order_id}
 ```
 
----
-
-## RabbitMQ Management UI
-
-RabbitMQ dashboard:
+Expected Order Service logs:
 
 ```text
-http://localhost:15672
+CACHE MISS
+CACHE SET
+CACHE HIT
 ```
 
-Login:
+### 4. Test notification worker
 
-```text
-guest
+Open Notification Service logs:
+
+```bash
+docker compose logs -f notification-service
 ```
 
-Password:
+Create another order and check the worker logs.
+
+Expected logs:
 
 ```text
-guest
+[Worker] Job received
+[Worker] Sending notification payment_id=... attempt=1/3
+[Provider] Simulating external email provider latency=1000ms
+[Worker] Provider failed ... retry_after=2s
+[Worker] Sending notification payment_id=... attempt=2/3
+[Provider] Email sent successfully
+[Idempotency] Notification marked as processed
+[Worker] Notification completed
+```
+
+### 5. Check Redis keys
+
+Open Redis CLI:
+
+```bash
+docker exec -it redis redis-cli
+```
+
+Check all keys:
+
+```redis
+KEYS *
+```
+
+Expected keys:
+
+```text
+order:{order_id}
+notification:payment:{payment_id}
+```
+
+Check order cache:
+
+```redis
+GET order:{order_id}
+TTL order:{order_id}
+```
+
+Check notification idempotency:
+
+```redis
+GET notification:payment:{payment_id}
+TTL notification:payment:{payment_id}
+```
+
+Expected result:
+
+```text
+"processed"
 ```
 
 ---
 
 ## Evidence / Screenshots
 
-### 1. Docker Compose Running
+### 1. Docker Compose Running with Redis
 
-![Docker Compose Running](images/docker-compose-running.png)
+![Docker Compose Assignment 4](images/docker-compose-assignment4.png)
 
-### 2. Successful Payment Request in Postman
+This screenshot shows all required containers running: Order Service, Payment Service, Notification Service, PostgreSQL, RabbitMQ, and Redis.
 
-![Postman Payment Request](images/postman-p-request.png)
+### 2. Successful Order Creation in Postman
 
-### 3. Notification Service Log
+![Postman Create Order](images/postman-create-order.png)
 
-![Notification Service Log](images/notification-log.png)
+This screenshot shows a successful `POST /orders` request with `201 Created`.
 
-### 4. RabbitMQ Management UI
+### 3. Successful Get Order Request in Postman
+
+![Postman Get Order](images/postman-get-order.png)
+
+This screenshot shows a successful `GET /orders/{order_id}` request with `200 OK`.
+
+### 4. Redis Cache Miss, Set, and Hit Logs
+
+![Order Cache Logs](images/order-cache-miss-hit.png)
+
+This screenshot proves the Redis cache-aside implementation in the Order Service. The first request produces `CACHE MISS` and `CACHE SET`, while the next request produces `CACHE HIT`.
+
+### 5. Notification Worker Retry and Idempotency Logs
+
+![Notification Worker Retry](images/notification-worker-retry.png)
+
+This screenshot proves that the Notification Service works as a background worker, retries failed provider calls, uses exponential backoff, and marks the job as processed.
+
+### 6. Redis Cache and Idempotency Proof
+
+![Redis Proof](images/redis-cache-idempotency-proof.png)
+
+This screenshot shows both Redis keys: `order:{order_id}` for cache and `notification:payment:{payment_id}` for idempotency. It also shows TTL values for both keys.
+
+### 7. RabbitMQ Management UI
 
 ![RabbitMQ UI](images/rabbitmq-ui.png)
 
+This screenshot shows the RabbitMQ Management UI and the message queue used for payment events.
 
 ---
 
 ## Deliverables Included
 
-* Source code for all three services
-* Docker Compose file
-* Architecture Diagram
-* README with ACK logic and Idempotency explanation
-
-This matches the Assignment 3 requirements.
+* Source code for Order, Payment, and Notification services
+* Redis cache-aside implementation in Order Service
+* Cache invalidation after order status updates
+* Redis-based idempotency in Notification Service
+* Notification background worker with RabbitMQ
+* Simulated external provider using Adapter Pattern
+* Retry policy with exponential backoff
+* Docker Compose file with Redis, PostgreSQL, RabbitMQ, and all services
+* Architecture diagram
+* README documentation
+* Evidence screenshots
 
 ---
 
 ## Conclusion
 
-This assignment demonstrates an event-driven architecture using RabbitMQ.
+Assignment 4 improves the previous event-driven microservice system by adding production-ready performance and reliability patterns.
 
-The Payment Service publishes payment events after successful database transactions. The Notification Service consumes these events asynchronously and processes notifications independently.
+The Order Service now uses Redis cache-aside to reduce database load and improve response time for repeated order lookups.
 
-The project uses:
+The Notification Service now works as a reliable background worker. It consumes RabbitMQ events, sends notifications through a provider interface, retries temporary provider failures using exponential backoff, and stores processed payment IDs in Redis to prevent duplicate notifications.
 
-* RabbitMQ for asynchronous messaging
-* Manual ACKs for reliability
-* Durable queues for persistence
-* Idempotency checks for duplicate prevention
-* Docker Compose for full environment orchestration
-
-This implementation follows the required EDA design and demonstrates reliable producer-consumer communication between microservices.
+This implementation demonstrates caching, background jobs, external integration abstraction, retries, idempotency, and Docker-based infrastructure orchestration.
