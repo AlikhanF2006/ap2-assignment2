@@ -38,7 +38,6 @@ services:
     restart: always
     depends_on:
       - postgres
-      - rabbitmq
     environment:
       DB_URL: postgres://postgres:postgres@postgres:5432/ap2db?sslmode=disable
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
@@ -52,6 +51,8 @@ services:
     build: ./notification-service
     container_name: notification-service
     restart: always
+    ports:
+      - "9090:9090"
     depends_on:
       - rabbitmq
     environment:

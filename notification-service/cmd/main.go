@@ -20,6 +20,7 @@ func main() {
 
 	rabbitURL := os.Getenv("RABBITMQ_URL")
 	if rabbitURL == "" {
+
 		rabbitURL = "amqp://guest:guest@localhost:5672/"
 	}
 
