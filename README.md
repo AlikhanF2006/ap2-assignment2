@@ -63,26 +63,7 @@ Redis is used for two purposes:
 
 ## Assignment 4 Architecture Diagram
 
-```mermaid
-flowchart LR
-    Client[Client / Postman] -->|HTTP REST| Order[Order Service]
-
-    Order -->|Read and Write Orders| Postgres[(PostgreSQL)]
-    Order -->|Cache Aside: GET / SET / DELETE order:id| Redis[(Redis)]
-
-    Order -->|gRPC CreatePayment| Payment[Payment Service]
-    Payment -->|Save Payment| Postgres
-    Payment -->|Publish payment.completed event| RabbitMQ[(RabbitMQ Queue)]
-
-    RabbitMQ -->|Consume Event| Notification[Notification Service Worker]
-
-    Notification -->|Check notification:payment:id| Redis
-    Notification -->|Send with Retry and Backoff| Provider[Simulated Email Provider]
-
-    Provider -->|Success or Failure| Notification
-    Notification -->|Mark Processed| Redis
-```
-
+![Assignment 4 Architecture Diagram](images/assignment4-architecture-diagram.png)
 ---
 
 ## Redis Cache-Aside Strategy
