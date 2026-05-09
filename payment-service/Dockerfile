@@ -2,9 +2,11 @@ FROM golang:latest
 
 WORKDIR /app
 
+COPY go.mod go.sum ./
+RUN go mod download
+
 COPY . .
 
-RUN go mod tidy
-RUN go build -o order-service ./cmd
+RUN go build -o payment-service ./cmd
 
-CMD ["./order-service"]
+CMD ["./payment-service"]

@@ -8,6 +8,7 @@ import (
 
 type PaymentEvent struct {
 	EventID       string `json:"event_id"`
+	PaymentID     string `json:"payment_id"`
 	OrderID       string `json:"order_id"`
 	Amount        int64  `json:"amount"`
 	CustomerEmail string `json:"customer_email"`
@@ -60,8 +61,9 @@ func (p *RabbitMQPublisher) Publish(event PaymentEvent) error {
 		false,
 		false,
 		amqp091.Publishing{
-			ContentType: "application/json",
-			Body:        body,
+			ContentType:  "application/json",
+			DeliveryMode: amqp091.Persistent,
+			Body:         body,
 		},
 	)
 }

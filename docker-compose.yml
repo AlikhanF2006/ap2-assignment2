@@ -16,6 +16,13 @@ services:
       - "5672:5672"
       - "15672:15672"
 
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: always
+    ports:
+      - "6379:6379"
+
   order-service:
     build: ./order-service
     container_name: order-service
@@ -23,11 +30,17 @@ services:
     depends_on:
       - postgres
       - payment-service
+      - redis
     environment:
       DB_URL: postgres://postgres:postgres@postgres:5432/ap2db?sslmode=disable
       PAYMENT_GRPC_ADDR: payment-service:50051
       PORT: 8081
       GRPC_PORT: 50052
+
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ""
+      REDIS_DB: 0
+      CACHE_TTL_SECONDS: 300
     ports:
       - "8081:8081"
       - "50052:50052"
@@ -38,6 +51,7 @@ services:
     restart: always
     depends_on:
       - postgres
+      - rabbitmq
     environment:
       DB_URL: postgres://postgres:postgres@postgres:5432/ap2db?sslmode=disable
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
@@ -55,5 +69,16 @@ services:
       - "9090:9090"
     depends_on:
       - rabbitmq
+      - redis
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ""
+      REDIS_DB: 0
+
+      PROVIDER_MODE: SIMULATED
+      MAX_RETRIES: 3
+      BACKOFF_BASE_SECONDS: 2
+      PROVIDER_LATENCY_MS: 1000
+      PROVIDER_FAILURE_RATE: 30

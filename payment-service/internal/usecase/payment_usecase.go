@@ -57,6 +57,7 @@ func (u *PaymentUsecase) CreatePayment(orderID string, amount int64) (*domain.Pa
 	if u.publisher != nil {
 		event := publisher.PaymentEvent{
 			EventID:       uuid.NewString(),
+			PaymentID:     payment.ID,
 			OrderID:       payment.OrderID,
 			Amount:        payment.Amount,
 			CustomerEmail: "user@example.com",

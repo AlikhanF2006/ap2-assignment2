@@ -3,10 +3,13 @@ package app
 import (
 	"database/sql"
 	"os"
+	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
 
+	"order-service/internal/cache"
 	"order-service/internal/client"
 	"order-service/internal/repository"
 	grpcTransport "order-service/internal/transport/grpc"
@@ -34,7 +37,23 @@ func NewApp() (*gin.Engine, *usecase.OrderUsecase, error) {
 		return nil, nil, err
 	}
 
-	orderUsecase := usecase.NewOrderUsecase(repo, paymentClient)
+	redisAddr := os.Getenv("REDIS_ADDR")
+	redisPassword := os.Getenv("REDIS_PASSWORD")
+
+	redisDB, _ := strconv.Atoi(os.Getenv("REDIS_DB"))
+	ttlSeconds, _ := strconv.Atoi(os.Getenv("CACHE_TTL_SECONDS"))
+	if ttlSeconds == 0 {
+		ttlSeconds = 300
+	}
+
+	orderCache := cache.NewRedisOrderCache(
+		redisAddr,
+		redisPassword,
+		redisDB,
+		time.Duration(ttlSeconds)*time.Second,
+	)
+
+	orderUsecase := usecase.NewOrderUsecase(repo, paymentClient, orderCache)
 	handler := httpTransport.NewHandler(orderUsecase)
 
 	router := gin.Default()

@@ -60,20 +60,22 @@ func (c *RabbitMQConsumer) Start() error {
 		return err
 	}
 
-	log.Println("Notification service is waiting for payment events...")
+	log.Println("[Worker] Notification service is waiting for payment events...")
 
 	for msg := range msgs {
 		var event domain.PaymentEvent
 
 		if err := json.Unmarshal(msg.Body, &event); err != nil {
-			log.Println("failed to parse message:", err)
+			log.Println("[Worker] Failed to parse message:", err)
 			msg.Nack(false, false)
 			continue
 		}
 
+		log.Printf("[Worker] Job received event_id=%s payment_id=%s order_id=%s", event.EventID, event.PaymentID, event.OrderID)
+
 		if err := c.uc.SendNotification(event); err != nil {
-			log.Println("failed to send notification:", err)
-			msg.Nack(false, true)
+			log.Println("[Worker] Job failed:", err)
+			msg.Nack(false, false)
 			continue
 		}
 
